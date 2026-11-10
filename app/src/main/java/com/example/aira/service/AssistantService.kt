@@ -69,6 +69,7 @@ class AssistantService : Service() {
     private lateinit var ttsManager: TextToSpeechManager
 
     private var activeVoskModel: Model? = null
+    private var activeModelName: String? = null
     private var wakeWordDetector: WakeWordDetector? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var audioRecorder: AudioRecorder? = null
@@ -100,6 +101,16 @@ class AssistantService : Service() {
                 )
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
                 manager?.notify(NotificationHelper.NOTIFICATION_ID, notification)
+            }
+        }
+
+        // Observe speech model selection changes dynamically
+        serviceScope.launch {
+            preferencesManager.selectedModelFlow.collect { newModelName ->
+                if (activeModelName != null && activeModelName != newModelName && activeVoskModel != null) {
+                    Log.d(TAG, "Selected model changed while service active. Switching model to: $newModelName")
+                    switchActiveModel(newModelName)
+                }
             }
         }
     }
@@ -184,6 +195,7 @@ class AssistantService : Service() {
             }
 
             activeVoskModel = model
+            activeModelName = selectedModelName
             val wakePhrase = preferencesManager.getWakePhrase()
 
             wakeWordDetector = VoskWakeWordDetector(model, wakePhrase)
@@ -193,6 +205,44 @@ class AssistantService : Service() {
                 setupAudioRecorderAndStart()
                 resetInactivityTimer()
             }
+        }
+    }
+
+    private fun switchActiveModel(newModelName: String) {
+        serviceScope.launch {
+            if (!modelManager.isModelInstalled(newModelName)) {
+                Log.w(TAG, "Cannot switch to model: $newModelName is not installed.")
+                return@launch
+            }
+
+            Log.d(TAG, "Reloading speech engine with new model: $newModelName")
+            audioRecorder?.pause()
+            wakeWordDetector?.release()
+            wakeWordDetector = null
+            speechRecognizer?.release()
+            speechRecognizer = null
+
+            val model = modelManager.getOrLoadModel(newModelName)
+            if (model == null) {
+                Log.e(TAG, "Failed to load model during switch: $newModelName")
+                withContext(Dispatchers.Main) {
+                    AssistantStateHolder.resetToOff("Failed to load model: $newModelName")
+                    stopSelf()
+                }
+                return@launch
+            }
+
+            activeVoskModel = model
+            activeModelName = newModelName
+            val wakePhrase = preferencesManager.getWakePhrase()
+
+            wakeWordDetector = VoskWakeWordDetector(model, wakePhrase)
+            speechRecognizer = SpeechRecognizer(model)
+
+            withContext(Dispatchers.Main) {
+                startWakeWordListening()
+            }
+            Log.i(TAG, "Successfully switched active speech model to: $newModelName")
         }
     }
 
@@ -388,6 +438,7 @@ class AssistantService : Service() {
         ttsManager.shutdown()
         modelManager.releaseModel()
         activeVoskModel = null
+        activeModelName = null
 
         AssistantStateHolder.resetToOff()
         super.onDestroy()

@@ -8,8 +8,10 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
+import android.provider.ContactsContract
 import android.provider.Settings
 import android.util.Log
+import com.example.aira.utils.PermissionManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -257,6 +259,90 @@ class PhoneActions(private val context: Context) {
                 spokenResponse = "Could not open dialer.",
                 displayText = "Dialer error: ${e.localizedMessage}",
                 actionType = "DIALER"
+            )
+        }
+    }
+
+    fun callContact(contactName: String): CommandResult {
+        if (!PermissionManager.hasReadContactsPermission(context)) {
+            return CommandResult(
+                isSuccess = false,
+                spokenResponse = "Contacts permission is required to search contacts. Please grant it in settings.",
+                displayText = "Contacts permission required",
+                actionType = "CALL_CONTACT"
+            )
+        }
+
+        val cleanQuery = contactName.trim().lowercase(Locale.getDefault())
+        if (cleanQuery.isBlank()) {
+            return CommandResult(
+                isSuccess = false,
+                spokenResponse = "Who would you like to call?",
+                displayText = "Contact name empty",
+                actionType = "CALL_CONTACT"
+            )
+        }
+
+        return try {
+            val projection = arrayOf(
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER
+            )
+
+            var exactMatch: Pair<String, String>? = null
+            var partialMatch: Pair<String, String>? = null
+
+            val cursor = context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                null,
+                null,
+                null
+            )
+
+            cursor?.use { c ->
+                val nameIdx = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numIdx = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                while (c.moveToNext()) {
+                    val name = if (nameIdx != -1) c.getString(nameIdx) ?: "" else ""
+                    val number = if (numIdx != -1) c.getString(numIdx) ?: "" else ""
+                    val lowerName = name.lowercase(Locale.getDefault()).trim()
+                    if (lowerName == cleanQuery) {
+                        exactMatch = Pair(name, number)
+                        break
+                    } else if (partialMatch == null && (lowerName.contains(cleanQuery) || cleanQuery.contains(lowerName))) {
+                        partialMatch = Pair(name, number)
+                    }
+                }
+            }
+
+            val target = exactMatch ?: partialMatch
+            if (target != null && target.second.isNotBlank()) {
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(target.second.trim())}")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                CommandResult(
+                    isSuccess = true,
+                    spokenResponse = "Calling ${target.first}.",
+                    displayText = "Calling ${target.first}: ${target.second}",
+                    actionType = "CALL_CONTACT"
+                )
+            } else {
+                CommandResult(
+                    isSuccess = false,
+                    spokenResponse = "Could not find a contact named $contactName in your contacts.",
+                    displayText = "Contact '$contactName' not found",
+                    actionType = "CALL_CONTACT"
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error querying contacts for: $contactName", e)
+            CommandResult(
+                isSuccess = false,
+                spokenResponse = "Could not search contacts.",
+                displayText = "Contact error: ${e.localizedMessage}",
+                actionType = "CALL_CONTACT"
             )
         }
     }

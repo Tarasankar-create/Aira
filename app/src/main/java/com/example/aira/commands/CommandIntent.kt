@@ -11,6 +11,7 @@ sealed class CommandIntent {
     enum class VolumeAction { UP, DOWN, MUTE }
     data class ChangeVolume(val action: VolumeAction) : CommandIntent()
     data class OpenDialer(val phoneNumber: String? = null) : CommandIntent()
+    data class CallContact(val contactName: String) : CommandIntent()
     data class OpenWebsite(val url: String) : CommandIntent()
     object TellTime : CommandIntent()
     object TellDate : CommandIntent()

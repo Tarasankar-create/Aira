@@ -37,6 +37,13 @@ object PermissionManager {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    fun hasReadContactsPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         return powerManager.isIgnoringBatteryOptimizations(context.packageName)

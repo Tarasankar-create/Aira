@@ -111,6 +111,36 @@ class CommandRegistryTest {
     }
 
     @Test
+    fun testDialerAndCallCommands() {
+        val dialer = registry.parse("open dialer")
+        assertTrue(dialer is CommandIntent.OpenDialer && dialer.phoneNumber == null)
+
+        val phone = registry.parse("open phone")
+        assertTrue(phone is CommandIntent.OpenDialer && phone.phoneNumber == null)
+
+        val dialNumber = registry.parse("dial 9876543210")
+        assertTrue(dialNumber is CommandIntent.OpenDialer && dialNumber.phoneNumber == "9876543210")
+
+        val callNumber = registry.parse("call +1 234 567 8900")
+        assertTrue(callNumber is CommandIntent.OpenDialer && callNumber.phoneNumber == "+12345678900")
+
+        val callMom = registry.parse("call mom")
+        assertTrue(callMom is CommandIntent.CallContact && callMom.contactName == "mom")
+
+        val callDad = registry.parse("call to dad")
+        assertTrue(callDad is CommandIntent.CallContact && callDad.contactName == "dad")
+
+        val dialAlice = registry.parse("dial alice")
+        assertTrue(dialAlice is CommandIntent.CallContact && dialAlice.contactName == "alice")
+
+        val makeCall = registry.parse("make a call to john doe")
+        assertTrue(makeCall is CommandIntent.CallContact && makeCall.contactName == "john doe")
+
+        val phoneSister = registry.parse("phone sister")
+        assertTrue(phoneSister is CommandIntent.CallContact && phoneSister.contactName == "sister")
+    }
+
+    @Test
     fun testUnknownCommand() {
         val unknown = registry.parse("bake me a cake please")
         assertTrue(unknown is CommandIntent.Unknown)

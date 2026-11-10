@@ -45,6 +45,9 @@ class CommandProcessor(
             is CommandIntent.OpenDialer -> {
                 phoneActions.openDialer(intent.phoneNumber)
             }
+            is CommandIntent.CallContact -> {
+                phoneActions.callContact(intent.contactName)
+            }
             is CommandIntent.OpenWebsite -> {
                 phoneActions.openWebsite(intent.url)
             }

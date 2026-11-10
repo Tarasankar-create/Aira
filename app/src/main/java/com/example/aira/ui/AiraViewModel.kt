@@ -116,5 +116,6 @@ class AiraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun isRecordAudioGranted(): Boolean = PermissionManager.hasRecordAudioPermission(getApplication())
     fun isNotificationGranted(): Boolean = PermissionManager.hasNotificationPermission(getApplication())
+    fun isReadContactsGranted(): Boolean = PermissionManager.hasReadContactsPermission(getApplication())
     fun isIgnoringBatteryOptimizations(): Boolean = PermissionManager.isIgnoringBatteryOptimizations(getApplication())
 }

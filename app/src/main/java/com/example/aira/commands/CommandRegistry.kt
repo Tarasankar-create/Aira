@@ -64,13 +64,22 @@ class CommandRegistry {
         }
 
         // 7. Dialer / Call
-        if (matchesAny(query, "open dialer", "open phone", "phone dialer", "open keypad")) {
+        if (matchesAny(query, "open dialer", "open phone", "phone dialer", "open keypad") || query == "call" || query == "dial") {
             return CommandIntent.OpenDialer()
         }
-        val dialMatch = Regex("""(?:dial|call)\s+([0-9\s+-]+)""").find(query)
-        if (dialMatch != null) {
-            val number = dialMatch.groupValues[1].replace("\\s".toRegex(), "")
-            return CommandIntent.OpenDialer(number)
+        val callMatch = Regex("""^(?:make a call to|make a phone call to|phone|dial|call)(?:\s+to)?\s+(.+)""").find(query)
+        if (callMatch != null) {
+            val target = callMatch.groupValues[1].trim()
+            if (target.isNotEmpty()) {
+                val isPhoneNumber = target.any { it.isDigit() } &&
+                        target.all { it.isDigit() || it.isWhitespace() || it in "+-()#*" }
+                return if (isPhoneNumber) {
+                    val number = target.filter { !it.isWhitespace() }
+                    CommandIntent.OpenDialer(number)
+                } else {
+                    CommandIntent.CallContact(target)
+                }
+            }
         }
 
         // 8. Open Website

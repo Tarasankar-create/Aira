@@ -100,6 +100,7 @@ fun SettingsScreen(
 
     val hasMic = viewModel.isRecordAudioGranted()
     val hasNotif = viewModel.isNotificationGranted()
+    val hasContacts = viewModel.isReadContactsGranted()
     val ignoringBattery = viewModel.isIgnoringBatteryOptimizations()
 
     Column(
@@ -340,6 +341,16 @@ fun SettingsScreen(
                     title = "Notification Permission",
                     description = "Required for Android foreground listening notification.",
                     isGranted = hasNotif,
+                    onAction = onRequestPermissions
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Contacts
+                PermissionRow(
+                    title = "Contacts Permission",
+                    description = "Required to search contacts for voice calls (e.g. 'Call Mom').",
+                    isGranted = hasContacts,
                     onAction = onRequestPermissions
                 )
 

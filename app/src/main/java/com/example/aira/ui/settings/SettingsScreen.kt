@@ -94,7 +94,9 @@ fun SettingsScreen(
     val selectedModelName by viewModel.selectedModelName.collectAsState()
     val wakePhrase by viewModel.wakePhrase.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val downloadingModelName by viewModel.downloadingModelName.collectAsState()
     val downloadError by viewModel.downloadError.collectAsState()
+    val modelsUpdated by viewModel.modelsUpdated.collectAsState()
 
     val hasMic = viewModel.isRecordAudioGranted()
     val hasNotif = viewModel.isNotificationGranted()
@@ -204,15 +206,18 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 SpeechModelManager.AVAILABLE_MODELS.forEach { modelInfo ->
-                    val isInstalled = viewModel.modelManager.isModelInstalled(modelInfo.name)
+                    val isInstalled = remember(modelsUpdated, selectedModelName) {
+                        viewModel.modelManager.isModelInstalled(modelInfo.name)
+                    }
                     val isSelected = selectedModelName == modelInfo.name
+                    val isDownloading = (downloadingModelName == modelInfo.name)
 
                     ModelItemRow(
                         modelInfo = modelInfo,
                         isInstalled = isInstalled,
                         isSelected = isSelected,
-                        isDownloading = (downloadProgress != null && selectedModelName == modelInfo.name),
-                        progress = downloadProgress,
+                        isDownloading = isDownloading,
+                        progress = if (isDownloading) downloadProgress else null,
                         onSelect = { viewModel.setSelectedModel(modelInfo.name) },
                         onDownload = { viewModel.downloadModel(modelInfo) }
                     )

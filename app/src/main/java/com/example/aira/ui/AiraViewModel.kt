@@ -38,8 +38,14 @@ class AiraViewModel(application: Application) : AndroidViewModel(application) {
     private val _downloadProgress = MutableStateFlow<Int?>(null)
     val downloadProgress: StateFlow<Int?> = _downloadProgress.asStateFlow()
 
+    private val _downloadingModelName = MutableStateFlow<String?>(null)
+    val downloadingModelName: StateFlow<String?> = _downloadingModelName.asStateFlow()
+
     private val _downloadError = MutableStateFlow<String?>(null)
     val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
+
+    private val _modelsUpdated = MutableStateFlow(0)
+    val modelsUpdated: StateFlow<Int> = _modelsUpdated.asStateFlow()
 
     fun toggleListening(context: Context) {
         val currentStatus = assistantStatus.value
@@ -83,6 +89,7 @@ class AiraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun downloadModel(modelInfo: SpeechModelManager.ModelInfo) {
         viewModelScope.launch {
+            _downloadingModelName.value = modelInfo.name
             _downloadProgress.value = 0
             _downloadError.value = null
 
@@ -92,9 +99,12 @@ class AiraViewModel(application: Application) : AndroidViewModel(application) {
 
             if (result.isSuccess) {
                 _downloadProgress.value = null
+                _downloadingModelName.value = null
+                _modelsUpdated.value += 1
                 preferencesManager.setSelectedModelName(modelInfo.name)
             } else {
                 _downloadProgress.value = null
+                _downloadingModelName.value = null
                 _downloadError.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to download model"
             }
         }

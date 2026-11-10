@@ -3,8 +3,10 @@ package com.example.aira.ui.home
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,9 +50,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.aira.R
 import com.example.aira.data.model.ListeningState
 import com.example.aira.ui.AiraViewModel
 import com.example.aira.ui.components.AiraOrb
@@ -78,8 +81,11 @@ fun HomeScreen(
     val status by viewModel.assistantStatus.collectAsState()
     val wakePhrase by viewModel.wakePhrase.collectAsState()
     val selectedModelName by viewModel.selectedModelName.collectAsState()
+    val modelsUpdated by viewModel.modelsUpdated.collectAsState()
 
-    val isModelInstalled = viewModel.modelManager.isModelInstalled(selectedModelName)
+    val isModelInstalled = remember(selectedModelName, modelsUpdated) {
+        viewModel.modelManager.isModelInstalled(selectedModelName)
+    }
     val hasMicPermission = viewModel.isRecordAudioGranted()
     var showWakePhraseDialog by remember { mutableStateOf(false) }
 
@@ -99,19 +105,30 @@ fun HomeScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
-                Text(
-                    text = "AIRA",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = AiraCyan,
-                    letterSpacing = 2.sp
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.aira_logo),
+                    contentDescription = "Aira Logo",
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .border(1.5.dp, AiraCyan.copy(alpha = 0.6f), CircleShape)
                 )
-                Text(
-                    text = "Offline Voice Assistant",
-                    fontSize = 12.sp,
-                    color = TextSecondary
-                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "AIRA",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = AiraCyan,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        text = "Offline Voice Assistant",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                }
             }
 
             // Inactivity countdown badge when listening

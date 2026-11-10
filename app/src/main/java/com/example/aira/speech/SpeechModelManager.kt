@@ -128,32 +128,68 @@ class SpeechModelManager(private val context: Context) {
 
         try {
             Log.d(TAG, "Starting download from: ${modelInfo.downloadUrl}")
-            val url = URL(modelInfo.downloadUrl)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 30000
-                requestMethod = "GET"
+            var currentUrl = modelInfo.downloadUrl
+            var connection: HttpURLConnection
+            var redirects = 0
+            val maxRedirects = 5
+
+            while (true) {
+                val url = URL(currentUrl)
+                connection = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 20000
+                    readTimeout = 60000
+                    instanceFollowRedirects = true
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:109.0) Gecko/109.0 Firefox/109.0")
+                    setRequestProperty("Accept-Encoding", "identity")
+                }
+
+                val responseCode = connection.responseCode
+                if (responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
+                    responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
+                    responseCode == HttpURLConnection.HTTP_SEE_OTHER ||
+                    responseCode == 307 || responseCode == 308
+                ) {
+                    redirects++
+                    if (redirects > maxRedirects) {
+                        return@withContext Result.failure(Exception("Too many HTTP redirects from server"))
+                    }
+                    val newLocation = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    if (!newLocation.isNullOrBlank()) {
+                        currentUrl = if (newLocation.startsWith("http")) newLocation else URL(url, newLocation).toString()
+                        continue
+                    } else {
+                        return@withContext Result.failure(Exception("Redirected with missing Location header"))
+                    }
+                }
+
+                if (responseCode != HttpURLConnection.HTTP_OK) {
+                    return@withContext Result.failure(Exception("HTTP error $responseCode: ${connection.responseMessage}"))
+                }
+                break
             }
 
-            val responseCode = connection.responseCode
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                return@withContext Result.failure(Exception("HTTP error code $responseCode: ${connection.responseMessage}"))
-            }
+            val fileLength = connection.contentLengthLong
+            val expectedBytes = if (fileLength > 0) fileLength else (modelInfo.approxSizeMb * 1024L * 1024L)
 
-            val fileLength = connection.contentLength
-            val inputStream = BufferedInputStream(connection.inputStream)
+            val inputStream = BufferedInputStream(connection.inputStream, 32768)
             val outputStream = FileOutputStream(tempZipFile)
 
-            val data = ByteArray(8192)
-            var total: Long = 0
-            var count: Int
+            val data = ByteArray(16384)
+            var totalBytesRead: Long = 0
+            var bytesRead: Int
+            var lastReportedProgress = -1
 
-            while (inputStream.read(data).also { count = it } != -1) {
-                total += count
-                outputStream.write(data, 0, count)
-                if (fileLength > 0) {
-                    val progress = ((total * 100) / fileLength).toInt()
-                    onProgress(progress)
+            while (inputStream.read(data).also { bytesRead = it } != -1) {
+                totalBytesRead += bytesRead
+                outputStream.write(data, 0, bytesRead)
+                if (expectedBytes > 0) {
+                    val progress = ((totalBytesRead * 100) / expectedBytes).toInt().coerceIn(0, 99)
+                    if (progress != lastReportedProgress) {
+                        lastReportedProgress = progress
+                        onProgress(progress)
+                    }
                 }
             }
 
@@ -162,7 +198,14 @@ class SpeechModelManager(private val context: Context) {
             inputStream.close()
             connection.disconnect()
 
-            Log.d(TAG, "Download finished. Unzipping model to $targetDir...")
+            onProgress(100)
+            Log.d(TAG, "Download finished ($totalBytesRead bytes). Unzipping model to ${getModelsDirectory().absolutePath}...")
+
+            // Clean up any stale partial target directory before extracting
+            if (targetDir.exists()) {
+                targetDir.deleteRecursively()
+            }
+
             unzip(tempZipFile, getModelsDirectory())
 
             if (tempZipFile.exists()) {
@@ -173,7 +216,7 @@ class SpeechModelManager(private val context: Context) {
                 Log.d(TAG, "Model validated successfully: ${modelInfo.name}")
                 Result.success(Unit)
             } else {
-                Result.failure(Exception("Extracted model directory validation failed"))
+                Result.failure(Exception("Extracted model validation failed in ${targetDir.name}"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error downloading model", e)

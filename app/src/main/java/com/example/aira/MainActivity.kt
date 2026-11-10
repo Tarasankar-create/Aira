@@ -43,9 +43,8 @@ class MainActivity : ComponentActivity() {
                         contract = ActivityResultContracts.RequestMultiplePermissions()
                     ) { permissions ->
                         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
-                        val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            permissions[Manifest.permission.POST_NOTIFICATIONS] ?: false
-                        } else true
+                        val notifGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                                (permissions[Manifest.permission.POST_NOTIFICATIONS] ?: false)
 
                         android.util.Log.d(
                             "MainActivity",

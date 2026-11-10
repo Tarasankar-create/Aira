@@ -1,47 +1,70 @@
 package com.example.aira
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import com.example.aira.ui.AiraViewModel
+import com.example.aira.ui.navigation.AiraApp
 import com.example.aira.ui.theme.AiraTheme
+import com.example.aira.ui.theme.BackgroundDark
 
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: AiraViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         setContent {
             AiraTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = BackgroundDark
+                ) {
+                    val requiredPermissions = buildList {
+                        add(Manifest.permission.RECORD_AUDIO)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            add(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }.toTypedArray()
+
+                    val permissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestMultiplePermissions()
+                    ) { permissions ->
+                        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+                        val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            permissions[Manifest.permission.POST_NOTIFICATIONS] ?: false
+                        } else true
+
+                        android.util.Log.d(
+                            "MainActivity",
+                            "Permissions result - Audio: $audioGranted, Notification: $notifGranted"
+                        )
+                    }
+
+                    LaunchedEffect(Unit) {
+                        permissionLauncher.launch(requiredPermissions)
+                    }
+
+                    AiraApp(
+                        viewModel = viewModel,
+                        onRequestPermissions = {
+                            permissionLauncher.launch(requiredPermissions)
+                        }
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    AiraTheme {
-        Greeting("Android")
     }
 }

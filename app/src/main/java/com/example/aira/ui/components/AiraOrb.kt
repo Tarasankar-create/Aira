@@ -106,7 +106,8 @@ fun AiraOrb(
                 }
 
                 ListeningState.STARTING,
-                ListeningState.LISTENING_FOR_WAKE_WORD -> {
+                ListeningState.LISTENING_FOR_WAKE_WORD,
+                ListeningState.WAKE_WORD_DETECTED -> {
                     // Breathing cyan glow waiting for "Hey Assistant"
                     val currentRadius = baseRadius * pulseScale
 

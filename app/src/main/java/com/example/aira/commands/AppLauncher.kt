@@ -11,21 +11,46 @@ class AppLauncher(private val context: Context) {
     companion object {
         private const val TAG = "AiraAppLauncher"
 
-        // Common app aliases mapping to expected keywords or package fragments
+        // Common app aliases mapping to expected keywords or package fragments (English, Hindi, Odia)
         private val COMMON_APP_HINTS = mapOf(
             "whatsapp" to listOf("whatsapp"),
+            "व्हाट्सएप" to listOf("whatsapp"),
+            "ହ୍ୱାଟ୍ସଆପ୍" to listOf("whatsapp"),
             "youtube" to listOf("youtube"),
+            "यूट्यूब" to listOf("youtube"),
+            "ୟୁଟ୍ୟୁବ୍" to listOf("youtube"),
             "chrome" to listOf("chrome"),
+            "क्रोम" to listOf("chrome"),
+            "କ୍ରୋମ" to listOf("chrome"),
             "settings" to listOf("settings"),
+            "सेटिंग्स" to listOf("settings"),
+            "सेटिंग" to listOf("settings"),
+            "ସେଟିଂସ୍" to listOf("settings"),
             "camera" to listOf("camera"),
+            "कैमरा" to listOf("camera"),
+            "କ୍ୟାମେରା" to listOf("camera"),
             "calculator" to listOf("calc", "calculator"),
+            "कैलकुलेटर" to listOf("calc", "calculator"),
+            "କ୍ୟାଲକୁଲେଟର" to listOf("calc", "calculator"),
             "phone" to listOf("dialer", "phone", "call"),
+            "फोन" to listOf("dialer", "phone", "call"),
+            "ଫୋନ୍" to listOf("dialer", "phone", "call"),
             "messages" to listOf("message", "messaging", "sms", "mms"),
+            "मैसेज" to listOf("message", "messaging", "sms", "mms"),
+            "ମେସେଜ୍" to listOf("message", "messaging", "sms", "mms"),
             "contacts" to listOf("contact", "contacts", "people"),
+            "कॉन्टैक्ट्स" to listOf("contact", "contacts", "people"),
             "gmail" to listOf("gmail", "email", "mail"),
+            "ईमेल" to listOf("gmail", "email", "mail"),
             "gallery" to listOf("gallery", "photo", "photos"),
+            "गैलरी" to listOf("gallery", "photo", "photos"),
+            "ଗ୍ୟାଲେରୀ" to listOf("gallery", "photo", "photos"),
             "maps" to listOf("maps", "map"),
+            "नक्शा" to listOf("maps", "map"),
+            "ମ୍ୟାପ୍" to listOf("maps", "map"),
             "clock" to listOf("clock", "alarm"),
+            "घड़ी" to listOf("clock", "alarm"),
+            "ଘଣ୍ଟା" to listOf("clock", "alarm"),
             "calendar" to listOf("calendar")
         )
     }

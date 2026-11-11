@@ -146,4 +146,90 @@ class CommandRegistryTest {
         assertTrue(unknown is CommandIntent.Unknown)
         assertEquals("bake me a cake please", (unknown as CommandIntent.Unknown).rawQuery)
     }
+
+    @Test
+    fun testHindiCommands() {
+        val ytHi = registry.parse("यूट्यूब खोलो")
+        assertTrue(ytHi is CommandIntent.OpenApp && ytHi.targetAppName == "यूट्यूब")
+
+        val torchHiOn = registry.parse("टॉर्च चालू करो")
+        assertTrue(torchHiOn is CommandIntent.SetFlashlight && torchHiOn.enable)
+
+        val torchHiOff = registry.parse("टॉर्च बंद करो")
+        assertTrue(torchHiOff is CommandIntent.SetFlashlight && !torchHiOff.enable)
+
+        val batteryHi = registry.parse("बैटरी कितनी है")
+        assertTrue(batteryHi is CommandIntent.CheckBattery)
+
+        val timeHi = registry.parse("समय क्या हुआ")
+        assertTrue(timeHi is CommandIntent.TellTime)
+
+        val callHi = registry.parse("राहुल को कॉल करो")
+        assertTrue(callHi is CommandIntent.CallContact && callHi.contactName == "राहुल")
+
+        val volHi = registry.parse("आवाज़ बढ़ाओ")
+        assertTrue(volHi is CommandIntent.ChangeVolume && volHi.action == CommandIntent.VolumeAction.UP)
+    }
+
+    @Test
+    fun testOdiaCommands() {
+        val ytOr = registry.parse("ୟୁଟ୍ୟୁବ୍ ଖୋଲ")
+        assertTrue(ytOr is CommandIntent.OpenApp && ytOr.targetAppName == "ୟୁଟ୍ୟୁବ୍")
+
+        val torchOrOn = registry.parse("ଟର୍ଚ୍ଚ ଚାଲୁ କର")
+        assertTrue(torchOrOn is CommandIntent.SetFlashlight && torchOrOn.enable)
+
+        val torchOrOff = registry.parse("ଟର୍ଚ୍ଚ ବନ୍ଦ କର")
+        assertTrue(torchOrOff is CommandIntent.SetFlashlight && !torchOrOff.enable)
+
+        val batteryOr = registry.parse("ବ୍ୟାଟେରୀ କେତେ ଅଛି")
+        assertTrue(batteryOr is CommandIntent.CheckBattery)
+
+        val timeOr = registry.parse("ସମୟ କେତେ")
+        assertTrue(timeOr is CommandIntent.TellTime)
+
+        val callOr = registry.parse("ରାହୁଲ କୁ କଲ୍ କର")
+        assertTrue(callOr is CommandIntent.CallContact && callOr.contactName == "ରାହୁଲ")
+
+        val volOr = registry.parse("ଶବ୍ଦ ବଢ଼ାଅ")
+        assertTrue(volOr is CommandIntent.ChangeVolume && volOr.action == CommandIntent.VolumeAction.UP)
+    }
+
+    @Test
+    fun testVoiceSecurityPolicyLevels() {
+        val flashlightIntent = CommandIntent.SetFlashlight(true)
+        assertEquals(
+            com.example.aira.security.SecurityLevel.PUBLIC,
+            com.example.aira.security.VoiceSecurityPolicy.getRequiredSecurityLevel(flashlightIntent)
+        )
+
+        val callIntent = CommandIntent.CallContact("Mom")
+        assertEquals(
+            com.example.aira.security.SecurityLevel.OWNER_PROTECTED,
+            com.example.aira.security.VoiceSecurityPolicy.getRequiredSecurityLevel(callIntent)
+        )
+
+        val bankAppIntent = CommandIntent.OpenApp("HDFC Bank")
+        assertEquals(
+            com.example.aira.security.SecurityLevel.SENSITIVE,
+            com.example.aira.security.VoiceSecurityPolicy.getRequiredSecurityLevel(bankAppIntent)
+        )
+    }
+
+    @Test
+    fun testToolValidator() {
+        val toolReq = com.example.aira.conversation.ToolRequest(
+            toolName = "set_flashlight",
+            parameters = mapOf("enabled" to "true")
+        )
+        val validatedIntent = com.example.aira.conversation.ToolValidator.validateAndMap(toolReq)
+        assertTrue(validatedIntent is CommandIntent.SetFlashlight && validatedIntent.enable)
+
+        val invalidReq = com.example.aira.conversation.ToolRequest(
+            toolName = "execute_root_shell",
+            parameters = mapOf("cmd" to "rm -rf")
+        )
+        val rejectedIntent = com.example.aira.conversation.ToolValidator.validateAndMap(invalidReq)
+        assertEquals(null, rejectedIntent)
+    }
 }

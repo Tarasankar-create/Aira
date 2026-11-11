@@ -17,9 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
@@ -47,11 +45,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,8 +63,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.aira.speech.SpeechModelManager
+import com.example.aira.speech.models.DeviceProfile
 import com.example.aira.ui.AiraViewModel
+import com.example.aira.ui.security.VoiceEnrollmentDialog
 import com.example.aira.ui.theme.AiraCyan
 import com.example.aira.ui.theme.AiraPink
 import com.example.aira.ui.theme.AiraPurple
@@ -92,16 +98,37 @@ fun SettingsScreen(
     val voiceResponseEnabled by viewModel.voiceResponseEnabled.collectAsState()
     val speechRate by viewModel.speechRate.collectAsState()
     val selectedModelName by viewModel.selectedModelName.collectAsState()
+    val selectedProfile by viewModel.selectedProfile.collectAsState()
+    val voiceSecurityEnabled by viewModel.voiceSecurityEnabled.collectAsState()
+    val voiceMatchThreshold by viewModel.voiceMatchThreshold.collectAsState()
+    val isOwnerEnrolled by viewModel.isOwnerEnrolledFlow.collectAsState()
     val wakePhrase by viewModel.wakePhrase.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val downloadingModelName by viewModel.downloadingModelName.collectAsState()
     val downloadError by viewModel.downloadError.collectAsState()
     val modelsUpdated by viewModel.modelsUpdated.collectAsState()
 
-    val hasMic = viewModel.isRecordAudioGranted()
-    val hasNotif = viewModel.isNotificationGranted()
-    val hasContacts = viewModel.isReadContactsGranted()
-    val ignoringBattery = viewModel.isIgnoringBatteryOptimizations()
+    var permissionRefreshTrigger by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionRefreshTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val hasMic = remember(permissionRefreshTrigger) { viewModel.isRecordAudioGranted() }
+    val hasNotif = remember(permissionRefreshTrigger) { viewModel.isNotificationGranted() }
+    val hasContacts = remember(permissionRefreshTrigger) { viewModel.isReadContactsGranted() }
+    val hasOverlay = remember(permissionRefreshTrigger) { viewModel.isOverlayPermissionGranted() }
+    val ignoringBattery = remember(permissionRefreshTrigger) { viewModel.isIgnoringBatteryOptimizations() }
+    var showEnrollmentDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -185,7 +212,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // 2. Speech Models Section
-        SectionHeader(title = "Offline Speech Models", icon = Icons.Default.CloudDownload)
+        SectionHeader(title = "Offline Speech Models", icon = Icons.Default.Download)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -210,7 +237,7 @@ fun SettingsScreen(
                     val isInstalled = remember(modelsUpdated, selectedModelName) {
                         viewModel.modelManager.isModelInstalled(modelInfo.name)
                     }
-                    val isSelected = selectedModelName == modelInfo.name
+                    val isSelected = (selectedModelName == modelInfo.name)
                     val isDownloading = (downloadingModelName == modelInfo.name)
 
                     ModelItemRow(
@@ -219,7 +246,7 @@ fun SettingsScreen(
                         isSelected = isSelected,
                         isDownloading = isDownloading,
                         progress = if (isDownloading) downloadProgress else null,
-                        onSelect = { viewModel.setSelectedModel(modelInfo.name) },
+                        onSelect = { viewModel.selectVoskModel(modelInfo.name) },
                         onDownload = { viewModel.downloadModel(modelInfo) }
                     )
                     Spacer(modifier = Modifier.height(10.dp))
@@ -317,6 +344,209 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // 3b. Adaptive RAM Profile Section
+        SectionHeader(title = "Adaptive RAM Profile", icon = Icons.Default.Speed)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val detectedRam = remember { DeviceProfile.getTotalRamGb(context) }
+                val recommended = remember { DeviceProfile.detectProfile(context) }
+
+                Text(
+                    text = "Hardware Profile & RAM Allocation",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "Detected Device RAM: ~${detectedRam} GB (Recommended: ${recommended.title})",
+                    fontSize = 12.sp,
+                    color = AiraCyan
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                var profileExpanded by remember { mutableStateOf(false) }
+                val activeProfileObj = try {
+                    DeviceProfile.valueOf(selectedProfile)
+                } catch (e: Exception) {
+                    DeviceProfile.BALANCED
+                }
+
+                ExposedDropdownMenuBox(
+                    expanded = profileExpanded,
+                    onExpandedChange = { profileExpanded = !profileExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = activeProfileObj.title,
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = profileExpanded) },
+                        modifier = Modifier
+                            .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
+                            .fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = profileExpanded,
+                        onDismissRequest = { profileExpanded = false }
+                    ) {
+                        DeviceProfile.entries.forEach { profile ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(profile.title, fontWeight = FontWeight.SemiBold)
+                                        Text(profile.description, fontSize = 10.sp, color = TextSecondary)
+                                    }
+                                },
+                                onClick = {
+                                    viewModel.setSelectedProfile(profile.name)
+                                    profileExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = activeProfileObj.description,
+                    fontSize = 11.sp,
+                    color = TextSecondary
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // 3c. Voice Security & Biometrics Section
+        SectionHeader(title = "Voice Security & Owner Biometrics", icon = Icons.Default.Security)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Owner Voice Verification",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Protects sensitive actions (calls, contacts) by verifying speaker acoustic embeddings offline.",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+                    Switch(
+                        checked = voiceSecurityEnabled,
+                        onCheckedChange = { viewModel.setVoiceSecurityEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BackgroundDark,
+                            checkedTrackColor = AiraCyan
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Profile Enrollment Status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Owner Profile Status",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                        Text(
+                            text = if (isOwnerEnrolled) "Enrolled & Active" else "Not Enrolled (Open Access)",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOwnerEnrolled) SuccessGreen else AiraPink
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (isOwnerEnrolled) {
+                            OutlinedButton(
+                                onClick = { showEnrollmentDialog = true },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AiraCyan),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Re-enroll", fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.clearVoiceEnrollment() },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorRed),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Reset", fontSize = 11.sp)
+                            }
+                        } else {
+                            Button(
+                                onClick = { showEnrollmentDialog = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AiraCyan,
+                                    contentColor = BackgroundDark
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Register Voice", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Similarity Threshold Slider
+                Text(
+                    text = "Verification Sensitivity: ${(voiceMatchThreshold * 100).toInt()}% (Threshold: ${"%.2f".format(voiceMatchThreshold)})",
+                    fontSize = 12.sp,
+                    color = TextPrimary
+                )
+                Slider(
+                    value = voiceMatchThreshold,
+                    onValueChange = { viewModel.setVoiceMatchThreshold(it) },
+                    valueRange = 0.50f..0.85f,
+                    steps = 7,
+                    colors = SliderDefaults.colors(
+                        thumbColor = AiraCyan,
+                        activeTrackColor = AiraCyan,
+                        inactiveTrackColor = CardBorder
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Higher threshold requires closer acoustic match to owner; lower threshold reduces false rejections in noisy environments.",
+                    fontSize = 11.sp,
+                    color = TextTertiary
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
         // 4. Permissions & Battery Section
         SectionHeader(title = "Permissions & Background", icon = Icons.Default.Security)
         Card(
@@ -352,6 +582,17 @@ fun SettingsScreen(
                     description = "Required to search contacts for voice calls (e.g. 'Call Mom').",
                     isGranted = hasContacts,
                     onAction = onRequestPermissions
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Display Over Other Apps (Overlay)
+                PermissionRow(
+                    title = "Appear on Top (Overlay)",
+                    description = "Required to show the Siri-style glowing orb popup over other apps when 'Hey Assistant' is detected.",
+                    isGranted = hasOverlay,
+                    actionText = "Grant",
+                    onAction = { PermissionManager.requestOverlayPermission(context) }
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -563,6 +804,13 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(30.dp))
     }
+
+    if (showEnrollmentDialog) {
+        VoiceEnrollmentDialog(
+            viewModel = viewModel,
+            onDismissRequest = { showEnrollmentDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -701,6 +949,7 @@ fun PermissionRow(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(SuccessGreen.copy(alpha = 0.15f))
+                    .clickable { onAction() }
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

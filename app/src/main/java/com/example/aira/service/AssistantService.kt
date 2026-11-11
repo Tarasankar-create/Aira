@@ -1,5 +1,6 @@
 package com.example.aira.service
 
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,12 +15,15 @@ import com.example.aira.data.history.HistoryRepository
 import com.example.aira.data.model.AssistantHistoryItem
 import com.example.aira.data.model.ListeningState
 import com.example.aira.data.preferences.PreferencesManager
+import com.example.aira.security.SpeakerVerificationManager
 import com.example.aira.speech.AudioRecorder
+import com.example.aira.speech.SpeechEndDetector
 import com.example.aira.speech.SpeechModelManager
 import com.example.aira.speech.SpeechRecognizer
 import com.example.aira.speech.VoskWakeWordDetector
 import com.example.aira.speech.WakeWordDetector
 import com.example.aira.tts.TextToSpeechManager
+import com.example.aira.ui.overlay.VoicePopupManager
 import com.example.aira.utils.NotificationHelper
 import com.example.aira.utils.PermissionManager
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +37,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.vosk.Model
 
+/**
+ * Foreground service for Aira's 100% offline speech recognition, continuous background
+ * wake-word listening ("Hey Assistant"), and voice command execution using Vosk.
+ */
 class AssistantService : Service() {
 
     companion object {
@@ -67,12 +75,17 @@ class AssistantService : Service() {
     private lateinit var modelManager: SpeechModelManager
     private lateinit var commandProcessor: CommandProcessor
     private lateinit var ttsManager: TextToSpeechManager
+    private lateinit var voicePopupManager: VoicePopupManager
+    private var speechEndDetector: SpeechEndDetector? = null
+
+    private lateinit var speakerVerificationManager: SpeakerVerificationManager
 
     private var activeVoskModel: Model? = null
     private var activeModelName: String? = null
     private var wakeWordDetector: WakeWordDetector? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var audioRecorder: AudioRecorder? = null
+    private val commandAudioChunks = java.util.Collections.synchronizedList(mutableListOf<ByteArray>())
 
     private var timeoutDurationSeconds: Long = 600L
     private var timeoutSecondsRemaining: Long = 600L
@@ -85,6 +98,14 @@ class AssistantService : Service() {
         modelManager = SpeechModelManager(this)
         commandProcessor = CommandProcessor(this)
         ttsManager = TextToSpeechManager(this, preferencesManager)
+        speakerVerificationManager = SpeakerVerificationManager(this)
+
+        voicePopupManager = VoicePopupManager(this) {
+            Log.d(TAG, "Voice popup dismiss requested by user")
+            speechEndDetector?.stop()
+            speechRecognizer?.stopListening()
+            startWakeWordListening()
+        }
 
         timeoutDurationSeconds = preferencesManager.getTimeoutMinutes() * 60L
         timeoutSecondsRemaining = timeoutDurationSeconds
@@ -94,13 +115,7 @@ class AssistantService : Service() {
             preferencesManager.wakePhraseFlow.collect { newPhrase ->
                 Log.d(TAG, "Wake phrase changed in preferences: $newPhrase")
                 (wakeWordDetector as? VoskWakeWordDetector)?.updateWakePhrase(newPhrase)
-                val notification = NotificationHelper.buildListeningNotification(
-                    this@AssistantService,
-                    title = "Aira is listening",
-                    content = "Say '$newPhrase' to activate."
-                )
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-                manager?.notify(NotificationHelper.NOTIFICATION_ID, notification)
+                updateListeningNotification("Aira is listening", "Say '$newPhrase' to activate.")
             }
         }
 
@@ -161,6 +176,12 @@ class AssistantService : Service() {
             AssistantStateHolder.resetToOff("Failed to start foreground microphone service: ${e.localizedMessage}")
             stopSelf()
         }
+    }
+
+    private fun updateListeningNotification(title: String, content: String) {
+        val notification = NotificationHelper.buildListeningNotification(this, title, content)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        manager?.notify(NotificationHelper.NOTIFICATION_ID, notification)
     }
 
     private fun initializeAndStartListening() {
@@ -251,22 +272,25 @@ class AssistantService : Service() {
 
         audioRecorder = AudioRecorder(
             onAudioChunk = { buffer, length ->
-                // Route audio according to current state
                 val currentState = AssistantStateHolder.status.value.state
                 when (currentState) {
                     ListeningState.LISTENING_FOR_WAKE_WORD -> {
                         wakeWordDetector?.feedAudio(buffer, length)
                     }
                     ListeningState.LISTENING_FOR_COMMAND -> {
+                        if (length > 0) {
+                            commandAudioChunks.add(buffer.copyOf(length))
+                        }
                         speechRecognizer?.feedAudio(buffer, length)
                     }
-                    else -> {
-                        // In other states (speaking response, etc.), audio is suppressed
-                    }
+                    else -> Unit
                 }
             },
             onAmplitudeChanged = { amplitude ->
                 AssistantStateHolder.updateStatus { it.copy(audioAmplitude = amplitude) }
+                if (AssistantStateHolder.status.value.state == ListeningState.LISTENING_FOR_COMMAND) {
+                    speechEndDetector?.onAudioAmplitude(amplitude)
+                }
             }
         )
 
@@ -283,6 +307,16 @@ class AssistantService : Service() {
 
     private fun startWakeWordListening() {
         AssistantStateHolder.setState(ListeningState.LISTENING_FOR_WAKE_WORD)
+        val currentPhrase = preferencesManager.getWakePhrase()
+        updateListeningNotification("Aira is listening", "Say '$currentPhrase' to activate.")
+
+        AssistantStateHolder.updateStatus {
+            it.copy(
+                isPopupVisible = false,
+                isSpeaking = false,
+                lastRecognizedText = ""
+            )
+        }
         audioRecorder?.resume()
 
         wakeWordDetector?.start {
@@ -294,32 +328,70 @@ class AssistantService : Service() {
     private fun onWakeWordDetected() {
         resetInactivityTimer()
         wakeWordDetector?.stop()
-        audioRecorder?.pause()
 
-        AssistantStateHolder.setState(ListeningState.SPEAKING_RESPONSE)
+        AssistantStateHolder.setState(ListeningState.WAKE_WORD_DETECTED)
+        updateListeningNotification("Aira", "Listening for your command...")
+
         AssistantStateHolder.updateStatus {
             it.copy(
-                lastAssistantResponse = "Yes, I'm listening."
+                lastRecognizedText = "",
+                lastAssistantResponse = "",
+                lastCommandStatus = "",
+                isSpeaking = false,
+                isPopupVisible = true
             )
         }
 
-        // Acknowledge wake word with speech response
-        ttsManager.speak("Yes, I'm listening.") {
-            serviceScope.launch(Dispatchers.Main) {
-                startCommandRecognition()
-            }
-        }
+        // Show the Siri-style floating orb popup over other apps or in-app
+        voicePopupManager.show()
+
+        // Start command recognition with audio-reactive animations and speech-end silence detection
+        startCommandRecognition()
     }
 
     private fun startCommandRecognition() {
         AssistantStateHolder.setState(ListeningState.LISTENING_FOR_COMMAND)
+        commandAudioChunks.clear()
         audioRecorder?.resume()
+
+        speechEndDetector?.stop()
+        speechEndDetector = SpeechEndDetector(
+            silenceDurationMs = 1400L,
+            minSpeechDurationMs = 350L,
+            initialTimeoutMs = 4500L,
+            maxCommandDurationMs = 8000L,
+            onSpeechStart = {
+                Log.d(TAG, "Speech started by user")
+                AssistantStateHolder.updateStatus { it.copy(isSpeaking = true) }
+            },
+            onSpeakingStateChanged = { isSpeaking ->
+                AssistantStateHolder.updateStatus { it.copy(isSpeaking = isSpeaking) }
+            },
+            onSpeechEnd = {
+                Log.d(TAG, "Speech end detected by silence! Finalizing recognition.")
+                AssistantStateHolder.setState(ListeningState.PROCESSING_COMMAND)
+                speechRecognizer?.finalizeRecognition()
+            },
+            onTimeout = { hasSpoken ->
+                Log.d(TAG, "Speech timeout (hasSpoken=$hasSpoken)")
+                if (!hasSpoken) {
+                    serviceScope.launch(Dispatchers.Main) {
+                        onNoSpeechDetected()
+                    }
+                } else {
+                    AssistantStateHolder.setState(ListeningState.PROCESSING_COMMAND)
+                    speechRecognizer?.finalizeRecognition()
+                }
+            }
+        ).apply { start() }
 
         speechRecognizer?.startListening(
             onPartialResult = { partial ->
+                speechEndDetector?.onVoskPartialText(partial)
                 AssistantStateHolder.updateStatus {
                     it.copy(lastRecognizedText = partial)
                 }
+                updateListeningNotification("Listening...", "\"$partial\"")
             },
             onFinalResult = { finalCommand ->
                 serviceScope.launch(Dispatchers.Main) {
@@ -329,20 +401,72 @@ class AssistantService : Service() {
             onError = { error ->
                 Log.e(TAG, "Speech recognition error: $error")
                 serviceScope.launch(Dispatchers.Main) {
-                    startWakeWordListening()
+                    onSpeechError(error)
                 }
             }
         )
     }
 
+    private fun onNoSpeechDetected() {
+        resetInactivityTimer()
+        speechEndDetector?.stop()
+        speechRecognizer?.stopListening()
+        audioRecorder?.pause()
+        voicePopupManager.hide()
+
+        AssistantStateHolder.setState(ListeningState.SPEAKING_RESPONSE)
+        val response = "Sorry, I didn't catch that. Try again."
+        AssistantStateHolder.updateStatus {
+            it.copy(lastAssistantResponse = response)
+        }
+        updateListeningNotification("Aira", response)
+
+        ttsManager.speak(response) {
+            serviceScope.launch(Dispatchers.Main) {
+                startWakeWordListening()
+            }
+        }
+    }
+
+    private fun onSpeechError(error: String) {
+        Log.e(TAG, "Speech recognition error: $error")
+        resetInactivityTimer()
+        speechEndDetector?.stop()
+        speechRecognizer?.stopListening()
+        audioRecorder?.pause()
+        voicePopupManager.hide()
+
+        AssistantStateHolder.setState(ListeningState.SPEAKING_RESPONSE)
+        val errorMsg = "Sorry, I had trouble hearing that. Try again."
+        AssistantStateHolder.updateStatus {
+            it.copy(lastAssistantResponse = errorMsg)
+        }
+        updateListeningNotification("Aira", errorMsg)
+
+        ttsManager.speak(errorMsg) {
+            serviceScope.launch(Dispatchers.Main) {
+                startWakeWordListening()
+            }
+        }
+    }
+
     private fun onCommandRecognized(commandText: String) {
         resetInactivityTimer()
+        speechEndDetector?.stop()
         speechRecognizer?.stopListening()
         audioRecorder?.pause()
 
+        // Smoothly dismiss the voice popup
+        voicePopupManager.hide()
+
         if (commandText.isBlank()) {
             AssistantStateHolder.setState(ListeningState.SPEAKING_RESPONSE)
-            ttsManager.speak("I didn't hear a command.") {
+            val msg = "Sorry, I didn't catch that. Try again."
+            AssistantStateHolder.updateStatus {
+                it.copy(lastAssistantResponse = msg)
+            }
+            updateListeningNotification("Aira", msg)
+            ttsManager.speak(msg) {
                 serviceScope.launch(Dispatchers.Main) {
                     startWakeWordListening()
                 }
@@ -350,10 +474,55 @@ class AssistantService : Service() {
             return
         }
 
+        // Biometric Speaker Verification: Ensure command is spoken by the enrolled owner
+        val chunksCopy: List<ByteArray> = synchronized(commandAudioChunks) {
+            commandAudioChunks.toList().also { commandAudioChunks.clear() }
+        }
+        val totalBytes = chunksCopy.sumOf { it.size }
+        val totalSamples = totalBytes / 2
+        val floatSamples = FloatArray(totalSamples)
+        var sampleIdx = 0
+        for (chunk in chunksCopy) {
+            var i = 0
+            while (i + 1 < chunk.size && sampleIdx < totalSamples) {
+                val s = (chunk[i].toInt() and 0xFF) or (chunk[i + 1].toInt() shl 8)
+                floatSamples[sampleIdx++] = s.toShort() / 32768.0f
+                i += 2
+            }
+        }
+
+        if (preferencesManager.isVoiceSecurityEnabled() && speakerVerificationManager.isOwnerEnrolled()) {
+            speakerVerificationManager.threshold = preferencesManager.getVoiceMatchThreshold()
+            val verification = speakerVerificationManager.verify(floatSamples)
+
+            if (!verification.isOwner) {
+                val simPercent = (verification.similarity.coerceAtLeast(0f) * 100).toInt()
+                Log.w(TAG, "Speaker verification failed for '$commandText': ${verification.reason} (similarity: ${verification.similarity}, threshold: ${verification.threshold})")
+                AssistantStateHolder.setState(ListeningState.SPEAKING_RESPONSE)
+                val rejectedResponse = "Access denied. I only listen to my owner."
+                AssistantStateHolder.updateStatus {
+                    it.copy(
+                        lastAssistantResponse = rejectedResponse,
+                        lastCommandStatus = "Access Denied: Voice Not Recognized ($simPercent%)"
+                    )
+                }
+                updateListeningNotification("Aira Security", rejectedResponse)
+                ttsManager.speak(rejectedResponse) {
+                    serviceScope.launch(Dispatchers.Main) {
+                        startWakeWordListening()
+                    }
+                }
+                return
+            } else {
+                Log.i(TAG, "Speaker verification passed! Similarity: ${verification.similarity} >= ${verification.threshold}")
+            }
+        }
+
         AssistantStateHolder.setState(ListeningState.PROCESSING_COMMAND)
         AssistantStateHolder.updateStatus {
             it.copy(lastRecognizedText = commandText)
         }
+        updateListeningNotification("Processing...", "\"$commandText\"")
 
         // Execute command via CommandProcessor
         val result = commandProcessor.processCommand(commandText)
@@ -374,6 +543,7 @@ class AssistantService : Service() {
                 lastCommandStatus = result.displayText
             )
         }
+        updateListeningNotification("Aira", result.spokenResponse)
 
         ttsManager.speak(result.spokenResponse) {
             serviceScope.launch(Dispatchers.Main) {
@@ -417,7 +587,6 @@ class AssistantService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // Foreground service continues running when user swipes app from Recent Apps
         Log.d(TAG, "onTaskRemoved: Activity closed/swiped, assistant foreground service continues running.")
     }
 
@@ -426,19 +595,23 @@ class AssistantService : Service() {
         inactivityTimerJob?.cancel()
         serviceScope.cancel()
 
+        speechEndDetector?.stop()
+        speechEndDetector = null
+
+        audioRecorder?.stop()
+        audioRecorder = null
+
         wakeWordDetector?.release()
         wakeWordDetector = null
 
         speechRecognizer?.release()
         speechRecognizer = null
 
-        audioRecorder?.stop()
-        audioRecorder = null
-
-        ttsManager.shutdown()
         modelManager.releaseModel()
         activeVoskModel = null
-        activeModelName = null
+
+        voicePopupManager.release()
+        ttsManager.shutdown()
 
         AssistantStateHolder.resetToOff()
         super.onDestroy()

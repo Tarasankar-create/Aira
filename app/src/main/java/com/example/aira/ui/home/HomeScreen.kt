@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -52,9 +53,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.aira.R
+import com.example.aira.ui.security.VoiceEnrollmentDialog
+import com.example.aira.utils.PermissionManager
 import com.example.aira.data.model.ListeningState
 import com.example.aira.ui.AiraViewModel
 import com.example.aira.ui.components.AiraOrb
@@ -86,8 +93,34 @@ fun HomeScreen(
     val isModelInstalled = remember(selectedModelName, modelsUpdated) {
         viewModel.modelManager.isModelInstalled(selectedModelName)
     }
-    val hasMicPermission = viewModel.isRecordAudioGranted()
+
+    var permissionRefreshTrigger by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionRefreshTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val hasMicPermission = remember(permissionRefreshTrigger) { viewModel.isRecordAudioGranted() }
+    val hasOverlayPermission = remember(permissionRefreshTrigger) { viewModel.isOverlayPermissionGranted() }
+    val isOwnerEnrolled by viewModel.isOwnerEnrolledFlow.collectAsState()
     var showWakePhraseDialog by remember { mutableStateOf(false) }
+    var showEnrollmentDialog by remember { mutableStateOf(false) }
+
+    // Automatically prompt user to register their voice when opening app if not yet enrolled
+    androidx.compose.runtime.LaunchedEffect(hasMicPermission, isOwnerEnrolled) {
+        if (hasMicPermission && !isOwnerEnrolled) {
+            showEnrollmentDialog = true
+        }
+    }
 
     val scrollState = rememberScrollState()
 
@@ -177,6 +210,7 @@ fun HomeScreen(
             ListeningState.OFF -> "Assistant is off"
             ListeningState.STARTING -> "Initializing Aira..."
             ListeningState.LISTENING_FOR_WAKE_WORD -> "Listening for \"$wakePhrase\""
+            ListeningState.WAKE_WORD_DETECTED -> "Wake phrase detected!"
             ListeningState.LISTENING_FOR_COMMAND -> "Listening for command..."
             ListeningState.PROCESSING_COMMAND -> "Processing command..."
             ListeningState.SPEAKING_RESPONSE -> "Responding..."
@@ -187,6 +221,7 @@ fun HomeScreen(
             ListeningState.OFF -> TextSecondary
             ListeningState.STARTING -> AiraPurple
             ListeningState.LISTENING_FOR_WAKE_WORD -> AiraCyan
+            ListeningState.WAKE_WORD_DETECTED -> AiraCyan
             ListeningState.LISTENING_FOR_COMMAND -> AiraCyan
             ListeningState.PROCESSING_COMMAND -> AiraPurple
             ListeningState.SPEAKING_RESPONSE -> AiraPink
@@ -244,29 +279,137 @@ fun HomeScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (!hasOverlayPermission) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { PermissionManager.requestOverlayPermission(context) },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AiraCyan.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = AiraCyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Enable Overlay for Minimized Mode",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Tap to grant 'Display over other apps' so Aira's voice orb appears over any screen when minimized.",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
+            }
+        }
 
-        // Diagnostic / Status Badges Row
-        Row(
+        if (!isOwnerEnrolled) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showEnrollmentDialog = true },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AiraCyan.copy(alpha = 0.7f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = AiraCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Register Owner Voice",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AiraCyan
+                        )
+                        Text(
+                            text = "Teach Aira your voice so unauthorized speakers cannot issue commands.",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                    }
+                    Button(
+                        onClick = { showEnrollmentDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AiraCyan,
+                            contentColor = BackgroundDark
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("Register", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Diagnostic / Status Badges: 2x2 Grid with balanced spacing so cards never stretch or wrap
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            StatusBadge(
-                label = "Wake Word (Tap)",
-                value = wakePhrase,
-                isOk = true,
-                onClick = { showWakePhraseDialog = true }
-            )
-            StatusBadge(
-                label = "Speech Model",
-                value = if (isModelInstalled) "Ready" else "Missing",
-                isOk = isModelInstalled
-            )
-            StatusBadge(
-                label = "Mic Permission",
-                value = if (hasMicPermission) "Granted" else "Needed",
-                isOk = hasMicPermission
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatusBadge(
+                    label = "Wake Word (Tap)",
+                    value = wakePhrase,
+                    isOk = true,
+                    onClick = { showWakePhraseDialog = true },
+                    modifier = Modifier.weight(1f)
+                )
+                StatusBadge(
+                    label = "Owner Voice",
+                    value = if (isOwnerEnrolled) "Enrolled" else "Register",
+                    isOk = isOwnerEnrolled,
+                    onClick = { showEnrollmentDialog = true },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatusBadge(
+                    label = "Speech Model",
+                    value = if (isModelInstalled) "Ready" else "Missing",
+                    isOk = isModelInstalled,
+                    modifier = Modifier.weight(1f)
+                )
+                StatusBadge(
+                    label = "Mic Permission",
+                    value = if (hasMicPermission) "Granted" else "Needed",
+                    isOk = hasMicPermission,
+                    onClick = if (!hasMicPermission) onRequestPermissions else null,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -416,6 +559,13 @@ fun HomeScreen(
         }
     }
 
+    if (showEnrollmentDialog) {
+        VoiceEnrollmentDialog(
+            viewModel = viewModel,
+            onDismissRequest = { showEnrollmentDialog = false }
+        )
+    }
+
     if (showWakePhraseDialog) {
         var inputPhrase by remember(wakePhrase) { mutableStateOf(wakePhrase) }
         val presets = listOf("Hey Assistant", "Hey Aira", "Aira", "Computer")
@@ -511,24 +661,38 @@ fun StatusBadge(
             .background(SurfaceDark)
             .border(1.dp, CardBorder, RoundedCornerShape(12.dp))
             .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = label, fontSize = 10.sp, color = TextTertiary)
-            Spacer(modifier = Modifier.height(2.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                color = TextTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
+                        .size(7.dp)
                         .clip(CircleShape)
                         .background(if (isOk) SuccessGreen else ErrorRed)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = value,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

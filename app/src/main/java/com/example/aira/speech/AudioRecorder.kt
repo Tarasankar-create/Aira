@@ -6,6 +6,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 class AudioRecorder(
@@ -111,7 +112,10 @@ class AudioRecorder(
                         }
                         if (sampleCount > 0) {
                             val rms = sqrt(sum / sampleCount).toFloat()
-                            val normalized = (rms / 32767f).coerceIn(0f, 1f)
+                            val noiseFloor = 100f
+                            val dynamicRange = 3500f
+                            val rawScaled = ((rms - noiseFloor) / dynamicRange).coerceIn(0f, 1f)
+                            val normalized = rawScaled.toDouble().pow(0.85).toFloat()
                             callback(normalized)
                         }
                     }

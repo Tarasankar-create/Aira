@@ -65,7 +65,7 @@ class SpeechRecognizer(
             if (completedPhrase) {
                 val resultText = parseText(rec.result)
                 if (resultText.isNotBlank()) {
-                    Log.i(TAG, "Final phrase completed: $resultText")
+                    Log.i(TAG, "Final phrase completed by Vosk: $resultText")
                     finishWithResult(resultText)
                     return
                 }
@@ -78,32 +78,41 @@ class SpeechRecognizer(
                 }
             }
 
-            // Check silence timeout
+            // Fallback silence check if external detector is not used
             if (hasHeardAnySpeech && (now - lastSpeechDetectedTime > SILENCE_AFTER_SPEECH_MS)) {
-                Log.d(TAG, "Silence detected after speech, finalizing command")
-                val finalResult = parseText(rec.finalResult)
-                finishWithResult(finalResult)
+                Log.d(TAG, "Fallback silence detected after speech, finalizing command")
+                finalizeRecognition()
                 return
             }
 
-            // Check no input timeout
+            // Fallback no input timeout
             if (!hasHeardAnySpeech && (now - speechStartTime > NO_INPUT_TIMEOUT_MS)) {
-                Log.d(TAG, "No speech detected within timeout")
+                Log.d(TAG, "Fallback no speech detected within timeout")
                 finishWithResult("")
                 return
             }
 
-            // Max overall duration guard
+            // Fallback max duration guard
             if (now - speechStartTime > MAX_COMMAND_DURATION_MS) {
-                Log.d(TAG, "Max command duration exceeded")
-                val finalResult = parseText(rec.finalResult)
-                finishWithResult(finalResult)
+                Log.d(TAG, "Fallback max command duration exceeded")
+                finalizeRecognition()
                 return
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error in speech recognition feedAudio", e)
             onErrorCallback?.invoke(e.localizedMessage ?: "Unknown speech error")
+        }
+    }
+
+    fun finalizeRecognition() {
+        if (!isListening.get()) return
+        val rec = recognizer
+        if (rec != null) {
+            val finalResult = parseText(rec.finalResult)
+            finishWithResult(finalResult)
+        } else {
+            finishWithResult("")
         }
     }
 
